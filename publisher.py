@@ -2,7 +2,7 @@ import time
 import sys
 from paho.mqtt import client as mqtt_client
 
-timeout_value = 2
+timeout_value = 60
 
 
 class Publisher:
@@ -16,6 +16,7 @@ class Publisher:
         self.instance_id = instance_id
         self.qos = 0
         self.delay = 0
+        self.instancecount = 1
     
     def on_connect(self, client, userdata, flags, rc):
         print(f"Publisher'{self.instance_id} 'successfully connected to broker")
@@ -28,13 +29,14 @@ class Publisher:
         topic = msg.topic
         if topic == 'request/qos':
             self.qos = int(message)
+        # analyser is set up to change this value last, which will triger sending
         elif topic == 'request/delay':
             self.delay = int(message)
-        # analyser is set up to change this value last, which will triger sending
-        elif topic == 'request/instancecount':
-            val = int(message)
-            if val >= self.instance_id:
+            if self.instancecount >= self.instance_id:
                 self.publish_loop()
+        elif topic == 'request/instancecount':
+            self.instancecount = int(message)
+            
     
 
 
@@ -68,7 +70,7 @@ class Publisher:
         counter = 0
         start_time = time.time()
         while time.time() - start_time < timeout_value:
-            self.client.publish(topic=topic, payload=str(counter), qos=0)
+            self.client.publish(topic=topic, payload=str(counter), qos=self.qos)
             counter += 1
             time.sleep(self.delay/1000)
 
