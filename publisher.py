@@ -2,21 +2,21 @@ import time
 import sys
 from paho.mqtt import client as mqtt_client
 
-timeout_value = 60
-
+timeout_value = 2
 
 class Publisher:
     def __init__(self, instance_id, broker, port):
         self.client = mqtt_client.Client(f"Publisher-instance-{instance_id}")
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
-        #self.client.on_disconnect = self.on_disconnect
+        self.client.on_disconnect = self.on_disconnect
         self.broker = broker
         self.port = port 
         self.instance_id = instance_id
         self.qos = 0
         self.delay = 0
         self.instancecount = 1
+        self.should_publish = False
     
     def on_connect(self, client, userdata, flags, rc):
         print(f"Publisher'{self.instance_id} 'successfully connected to broker")
@@ -33,7 +33,7 @@ class Publisher:
         elif topic == 'request/delay':
             self.delay = int(message)
             if self.instancecount >= self.instance_id:
-                self.publish_loop()
+                self.should_publish = True
         elif topic == 'request/instancecount':
             self.instancecount = int(message)
             
@@ -70,19 +70,26 @@ class Publisher:
         counter = 0
         start_time = time.time()
         while time.time() - start_time < timeout_value:
-            self.client.publish(topic=topic, payload=str(counter), qos=self.qos)
+            self.client.publish(topic=topic, payload=str(counter), qos=self.qos )
             counter += 1
             time.sleep(self.delay/1000)
+        print("max value", counter)
+        self.should_publish = False
 
     def start(self):
         self.client.connect(self.broker, self.port)
-        self.client.loop_forever()
-        # self.client.loop_start()
-        # try:
-        #     while True:
-        #         time.sleep(1)
-        # except:
-        #     self.client.loop_stop()
+        #self.client.loop_forever()
+        self.client.loop_start()
+        try:
+            while True:
+                if self.should_publish:
+                    print(f'instance {self.instance_id} publishing to {self.instance_id}/{self.qos}/{self.delay}')
+                    self.publish_loop()
+                time.sleep(1)
+        except:
+            self.client.loop_stop()
+            self.client.disconnect()
+            
 
 
 def main(id, broker='localhost', port=1883):
@@ -95,6 +102,7 @@ if __name__ == '__main__':
         sys.exit(1)
     pubid = int(sys.argv[1])
     broker = sys.argv[2] if len(sys.argv) > 3 else None
+    print('broker is',broker)
     port = int(sys.argv[3]) if len(sys.argv) > 4 else None
     if broker and port:
         main(pubid, broker, port)

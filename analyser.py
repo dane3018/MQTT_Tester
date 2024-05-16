@@ -4,8 +4,7 @@ import csv
 import numpy as np
 import pandas as pd
 from paho.mqtt import client as mqtt_client
-
-
+from publisher import timeout_value
 
 class Analyser:
     def __init__(self, broker, port):
@@ -34,7 +33,7 @@ class Analyser:
                         'msgs_recv_broker' : 0,
                         'sockets' : 0,
                         'published_dropped' : 0,
-                        'inflight' : 0
+                        'msgs_sent_broker' : 0
                     }
 
     def set_statmap(self):
@@ -97,14 +96,15 @@ class Analyser:
             "out_of_order": [],
             "average_delay": [],
             'msgs_recv_broker' : [],
+            'msgs_sent_broker' : [],
             'sockets' : [],
             'published_dropped' : [],
-            'inflight' : []
+            'msgs_sent_broker' : []
         }
         for maparr in self.statmap.items():
             # maparr[0] is the 'instancecount/qos/delay' maparr[1] are the values 
             total_msgs = sum(map(lambda val: val['msgcount'], maparr[1]))
-            msg_rate = round(total_msgs/60, 4)
+            msg_rate = round(total_msgs/timeout_value, 4)
             current_vals = sum(map(lambda val: val['current_val'], maparr[1]))
             loss_rate = round(1 - (total_msgs/current_vals), 4) if current_vals > 0 else 0 # avoid divide by 0
             out_of_order = sum(map(lambda val: val['out_order_count'], maparr[1]))
@@ -118,7 +118,7 @@ class Analyser:
             msg_recv_broker = brokerstats['msgs_recv_broker']
             sockets = brokerstats['sockets']
             published_dropped = brokerstats['published_dropped']
-            inflight = brokerstats['inflight']
+            msgs_sent_broker = brokerstats['msgs_sent_broker']
 
             stats["instancecount"].append(topics[0])
             stats["qos"].append(topics[1])
@@ -130,7 +130,7 @@ class Analyser:
             stats['msgs_recv_broker'].append(msg_recv_broker)
             stats["sockets"].append(sockets)
             stats['published_dropped'].append(published_dropped)
-            stats['inflight'].append(inflight)
+            stats['msgs_sent_broker'].append(msgs_sent_broker)
         return pd.DataFrame(stats)
 
                 
@@ -145,23 +145,28 @@ class Analyser:
         #             client.subscribe(f"counter/{i}/{j}/{delay}")
         client.subscribe('counter/#', qos=self.anqos)
         client.subscribe('$SYS/broker/load/messages/received/1min')
+        client.subscribe('$SYS/broker/load/messages/sent/1min')
         client.subscribe('$SYS/broker/load/sockets/1min')
         client.subscribe('$SYS/broker/load/publish/dropped/1min')
-        client.subscribe('$SYS/broker/messages/inflight')
+        
 
         
         
     
     def handle_counter(self, topic, message):
-        if self.start_time == 0:
-            self.start_time = time.time()
-        current_time = time.time()
-        if current_time - self.start_time >= 5:
-            return
+        
         subtopics = topic.split("/")
         instance = int(subtopics[1])
         qos = subtopics[2]
         delay = int(subtopics[3])
+        current_time = time.time()
+        if self.start_time == 0 and delay == self.delay:
+            self.start_time = time.time()
+        # stop recording after 60 seconds, ensure that any 'trickle' messages are not recorded 
+        if current_time - self.start_time >= timeout_value or delay != self.delay:
+            return
+        
+        
         # delay is the inner loop, so this value will change every 
         # cycle. If we receive a different delay this is from previous publish loop
         if delay != self.delay:
@@ -195,8 +200,8 @@ class Analyser:
             brokerstats['sockets'] = message
         elif topic == '$SYS/broker/load/publish/dropped/1min':
             brokerstats['published_dropped'] = message
-        elif topic == '$SYS/broker/messages/inflight':
-            brokerstats['inflight'] = message
+        elif topic == '$SYS/broker/load/messages/sent/1min':
+            brokerstats['msgs_sent_broker'] = message
  
             
 
@@ -236,8 +241,10 @@ class Analyser:
                             tests_remain -= 1
                             while self.start_time == 0: # will get set in message callback
                                 time.sleep(1)
-                            for i in range(62): # allow 2 extra seconds to 'catch up'
+                            print('received')
+                            for p in range(timeout_value):
                                 time.sleep(1)
+                            #time.sleep(120) 
                              # allow extra time for the backlog
                 print(f"writing data for analyser qos={anqos}")
                 self.write_csv(anqos)
@@ -252,7 +259,7 @@ class Analyser:
         self.client.loop_stop()
         
     
-an = Analyser('localhost', 1883)
+an = Analyser('192.168.8.250', 1883)
 an.start()
 
 
