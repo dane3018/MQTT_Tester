@@ -143,7 +143,7 @@ class Analyser:
         #         for k in range(4): # delay
         #             delay = 4 if k == 3 else k
         #             client.subscribe(f"counter/{i}/{j}/{delay}")
-        client.subscribe('counter/#', qos=self.anqos)
+        client.subscribe('counter/+/+/+', qos=self.anqos)
         client.subscribe('$SYS/broker/load/messages/received/1min')
         client.subscribe('$SYS/broker/load/messages/sent/1min')
         client.subscribe('$SYS/broker/load/sockets/1min')
@@ -154,7 +154,6 @@ class Analyser:
         
     
     def handle_counter(self, topic, message):
-        
         subtopics = topic.split("/")
         instance = int(subtopics[1])
         qos = subtopics[2]
@@ -213,6 +212,30 @@ class Analyser:
             self.handle_counter(topic, message)
         if subtopics[0] == '$SYS':
             self.handle_sys(topic, message)
+    
+    def wait_for_response(self):
+        has_recv = False
+        republish_attempts = 3
+        while not has_recv:
+            # wait for 15 seconds before re-sending
+            for q in range(15):
+                if self.start_time != 0:
+                    republish_attempts = 3
+                    has_recv = True
+                    break
+                time.sleep(1)
+            republish_attempts -= 1
+            if has_recv:
+                break
+            if republish_attempts < 0:
+                return False
+            self.client.publish('request/qos', self.qos)
+            time.sleep(1.5)
+            self.client.publish('request/instancecount', self.instancecount)
+            time.sleep(1.5)
+            self.client.publish('request/delay', self.delay)
+            print(f"re-publishing with sub qos={self.anqos}, instancecount={self.instancecount}, qos={self.qos}, delay={self.delay}.")
+        return True
 
     def start(self):
         self.client.connect(self.broker, self.port)
@@ -222,27 +245,34 @@ class Analyser:
             tests_remain = 180
             for anqos in range(3):
                 self.anqos = anqos
-                self.client.unsubscribe('counter/#')
-                self.client.subscribe('counter/#', qos=anqos)
+                self.client.unsubscribe('counter/+/+/+')
+                self.client.subscribe('counter/+/+/+', qos=anqos)
                 for qos in range(3): # qos 
-                    self.qos = qos
-                    self.client.publish('request/qos', qos)
-                    time.sleep(1.5) # ensure it is received before the delay, which will trigger sending
                     for i in range(1,6):
-                        self.instancecount = i 
-                        self.client.publish('request/instancecount', i)
                         time.sleep(1.5)
                         for d in range(4):
+                            # publish to all topics at every iteration, so there is never a publisher sending 
+                            # to the wrong topic 
+                            self.qos = qos
+                            self.client.publish('request/qos', qos)
+                            time.sleep(1.5) # ensure it is received before the delay, which will trigger sending
+                            self.instancecount = i
+                            self.client.publish('request/instancecount', i)
                             delay = 4 if d == 3 else d
                             self.delay = delay
                             self.client.publish('request/delay', delay)
+
                             self.start_time = 0
                             print(f"publishing with sub qos={anqos}, instancecount={i}, qos={qos}, delay={delay}. Tests remaining: {tests_remain}")
                             tests_remain -= 1
-                            while self.start_time == 0: # will get set in message callback
-                                time.sleep(1)
+                            
+                            # handle case when a response is not received
+                            result = self.wait_for_response()
+                            if not result:
+                                print("unable to receive response, skipping")
+                                continue
                             print('received')
-                            for p in range(timeout_value):
+                            for p in range(timeout_value ):
                                 time.sleep(1)
                             #time.sleep(120) 
                              # allow extra time for the backlog
@@ -251,11 +281,12 @@ class Analyser:
                 self.write_raw_data(anqos)
                 self.set_statmap() # reset the statmap to zeros
 
-        except:
+        except KeyboardInterrupt as e:
             #self.client.loop_stop()
             #print(self.statmap['1/0/0'])
             self.write_csv(-1)
             self.write_raw_data(-1)
+            print(e)
         self.client.loop_stop()
         
     
