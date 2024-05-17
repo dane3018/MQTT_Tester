@@ -12,14 +12,19 @@ function terminate_processes {
     done
     exit 0
 }
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 <host>"
+  exit 1
+fi
 
+host=$1
 # Trap SIGINT (Ctrl+C) to call the function to terminate processes
 trap terminate_processes SIGINT
 
 # Loop to run 5 instances of your Python script with argument 'i'
 for i in {1..5}
 do
-    python3 publisher.py $i &
+    python3 publisher.py $i $host &
     pids+=($!)  # Store the process ID of each background process
 done
 

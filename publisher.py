@@ -2,7 +2,7 @@ import time
 import sys
 from paho.mqtt import client as mqtt_client
 
-timeout_value = 2
+timeout_value = 60
 
 class Publisher:
     def __init__(self, instance_id, broker, port):

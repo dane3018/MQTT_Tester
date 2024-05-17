@@ -105,8 +105,8 @@ class Analyser:
             # maparr[0] is the 'instancecount/qos/delay' maparr[1] are the values 
             total_msgs = sum(map(lambda val: val['msgcount'], maparr[1]))
             msg_rate = round(total_msgs/timeout_value, 4)
-            current_vals = sum(map(lambda val: val['current_val'], maparr[1]))
-            loss_rate = round(1 - (total_msgs/current_vals), 4) if current_vals > 0 else 0 # avoid divide by 0
+            max_vals = sum(map(lambda val: val['max_val'], maparr[1]))
+            loss_rate = round(1 - (total_msgs/max_vals), 4) if max_vals > 0 else 0 # avoid divide by 0
             out_of_order = sum(map(lambda val: val['out_order_count'], maparr[1]))
             out_order_rate = round(out_of_order/total_msgs, 4) if total_msgs > 0 else 0
             total_delay = sum(map(lambda val: val['delay_sum'], maparr[1]))
@@ -156,22 +156,17 @@ class Analyser:
     def handle_counter(self, topic, message):
         subtopics = topic.split("/")
         instance = int(subtopics[1])
-        qos = subtopics[2]
+        qos = int(subtopics[2])
         delay = int(subtopics[3])
         current_time = time.time()
         if self.start_time == 0 and delay == self.delay:
             self.start_time = time.time()
         # stop recording after 60 seconds, ensure that any 'trickle' messages are not recorded 
-        if current_time - self.start_time >= timeout_value or delay != self.delay:
+        if current_time - self.start_time >= timeout_value or delay != self.delay or qos != self.qos :
             return
         
-        
-        # delay is the inner loop, so this value will change every 
-        # cycle. If we receive a different delay this is from previous publish loop
-        if delay != self.delay:
-            return
         current_val = int(message)
-        # len(instance1 arraymap) == 5 le(instance5 arraymap) == 1
+    
         statmap = self.statmap[f'{self.instancecount}/{qos}/{delay}'][instance - 1]
         # handle the inter-delay first 
         last_msg_time = statmap['last_msg_time']
@@ -290,7 +285,7 @@ class Analyser:
         self.client.loop_stop()
         
     
-an = Analyser('192.168.8.250', 1883)
+an = Analyser('localhost', 1883)
 an.start()
 
 
