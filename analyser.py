@@ -1,7 +1,6 @@
 import time
 import sys
 import csv
-import numpy as np
 import pandas as pd
 from paho.mqtt import client as mqtt_client
 from publisher import timeout_value
@@ -18,7 +17,14 @@ class Analyser:
         self.anqos = 0
         self.instancecount = 1
         self.delay = 0
+        """
+        Statmap will store all publisher stats throughout the program. This map 
+        has keys as {instancecount}/{qos}/{delay} and values are an array of length 
+        instancecount that will record the stats relating to each publisher currently 
+        publishing
+        """
         self.statmap = {}
+        # stores broker stats 
         self.brokerstats = {}
         # intitialise the map to store all information 
         self.set_statmap()
@@ -41,14 +47,6 @@ class Analyser:
             for j in range(3): # qos
                 for k in range(4): # delay
                     delay = 4 if k == 3 else k
-                    # self.statmap[f"counter/{i}/{j}/{delay}"] = [{
-                    #     'msgcount' : 0,
-                    #     'current_val' : 0,
-                    #     'max_val' : 0,
-                    #     'out_order_count': 0,
-                    #     'last_msg_time' : 0,
-                    #     'delays' : []
-                    # } for l in range(6, i, -1)]
                     self.statmap[f"{i}/{j}/{delay}"] = [{
                         'msgcount' : -1, # counter on pub side starts at 0, will overcount by 1
                         'current_val' : 0,
@@ -65,6 +63,10 @@ class Analyser:
                     """
 
     def write_csv(self, qos):
+        """
+        Computes the stats using the instance's statmap and writes this data to a 
+        csv file
+        """
         df = self.compute_stats()
         file_path = f'output-{qos}.csv'
         df.to_csv(file_path, index=False)
@@ -86,6 +88,10 @@ class Analyser:
             writer.writerows(data)
 
     def compute_stats(self):
+        """
+        Will take the self.statmap and compute the stats required by the assignment 
+        specs. Returns a dataframe, to be easily converted to csv.
+        """
         # this will be a dataframe 
         stats = {
             "instancecount" : [],
@@ -136,13 +142,7 @@ class Analyser:
                 
     
     def on_connect(self, client, userdata, flags, rc):
-        print("Analyser successfully connected to broker")
-        # set up all subs 
-        # for i in range(5): #instancecount
-        #     for j in range(3): # qos
-        #         for k in range(4): # delay
-        #             delay = 4 if k == 3 else k
-        #             client.subscribe(f"counter/{i}/{j}/{delay}")
+        print(f"Analyser successfully connected to broker at {self.broker} and port {self.port}")
         client.subscribe('counter/+/+/+', qos=self.anqos)
         client.subscribe('$SYS/broker/load/messages/received/1min')
         client.subscribe('$SYS/broker/load/messages/sent/1min')
@@ -154,6 +154,10 @@ class Analyser:
         
     
     def handle_counter(self, topic, message):
+        """
+        Messages with counter/# topic will be filtered here. Updates stats relating 
+        to the current qos, delay and instance count.
+        """
         subtopics = topic.split("/")
         instance = int(subtopics[1])
         qos = int(subtopics[2])
@@ -167,8 +171,8 @@ class Analyser:
         
         current_val = int(message)
     
+        # the currently running publishers stats will get updated here
         statmap = self.statmap[f'{self.instancecount}/{qos}/{delay}'][instance - 1]
-        # handle the inter-delay first 
         last_msg_time = statmap['last_msg_time']
         
         if last_msg_time != 0 and current_val == 1 + statmap['current_val']: # ensure they are consecutive
@@ -182,9 +186,6 @@ class Analyser:
             statmap['out_order_count'] += 1
         else:
              statmap['max_val'] = current_val
-        # FIXME
-        # cur_time = time.time()
-        # statmap['delays'].append(cur_time)
 
     def handle_sys(self, topic, message):
         brokerstats = self.brokerstats[f'{self.instancecount}/{self.qos}/{self.delay}']
@@ -200,6 +201,9 @@ class Analyser:
             
 
     def on_message(self, client, userdata, msg):
+        """
+        on message callback for all subscribed topics 
+        """
         message = msg.payload.decode()
         topic = msg.topic
         subtopics = topic.split("/")
@@ -209,6 +213,10 @@ class Analyser:
             self.handle_sys(topic, message)
     
     def wait_for_response(self):
+        """
+        Will wait for 15 seconds for a response then resend the request to the publisher 
+        after 3 attempts will return False, if a response is received returns true.
+        """
         has_recv = False
         republish_attempts = 3
         while not has_recv:
@@ -231,43 +239,59 @@ class Analyser:
             self.client.publish('request/delay', self.delay)
             print(f"re-publishing with sub qos={self.anqos}, instancecount={self.instancecount}, qos={self.qos}, delay={self.delay}.")
         return True
+    
+    def run_once(self):
+        """
+        Used to run the bonus question. Requires other configuration to other code to work 
+        """
+        self.client.connect(self.broker, self.port)
+        self.client.loop_start()
+        self.client.publish('request/qos', 0)
+        self.client.publish('request/delay', 0)
+        self.client.publish('request/instancecount', 10)
+        self.qos = 0
+        self.delay = 0
+        self.instancecount = 10
+        result = self.wait_for_response()
+        time.sleep(60)
+        self.write_csv(-1)
+
 
     def start(self):
+        """
+        Runs the analyser program loop. Will write a csv for each iteration 
+        of anqos. 
+        """
         self.client.connect(self.broker, self.port)
         self.client.loop_start()
         try:
-            #self.client.loop_forever()
             tests_remain = 180
-            for anqos in range(3):
+            for anqos in range(3): # analyser qos level
                 self.anqos = anqos
                 self.client.unsubscribe('counter/+/+/+')
                 self.client.subscribe('counter/+/+/+', qos=anqos)
                 for qos in range(3): # qos 
-                    for i in range(1,6):
-                        time.sleep(1.5)
-                        for d in range(4):
+                    for i in range(1,6): # instancecount
+                        for d in range(4): # delay
                             # publish to all topics at every iteration, so there is never a publisher sending 
                             # to the wrong topic 
                             self.qos = qos
                             self.client.publish('request/qos', qos)
-                            time.sleep(1.5) # ensure it is received before the delay, which will trigger sending
                             self.instancecount = i
                             self.client.publish('request/instancecount', i)
                             delay = 4 if d == 3 else d
                             self.delay = delay
                             self.client.publish('request/delay', delay)
-
                             self.start_time = 0
                             print(f"publishing with sub qos={anqos}, instancecount={i}, qos={qos}, delay={delay}. Tests remaining: {tests_remain}")
                             tests_remain -= 1
-                            
                             # handle case when a response is not received
                             result = self.wait_for_response()
                             if not result:
                                 print("unable to receive response, skipping")
                                 continue
                             print('received')
-                            for p in range(timeout_value ):
+                            for p in range(timeout_value):
                                 time.sleep(1)
                             #time.sleep(120) 
                              # allow extra time for the backlog
@@ -284,8 +308,17 @@ class Analyser:
             print(e)
         self.client.loop_stop()
         
-    
-an = Analyser('localhost', 1883)
-an.start()
+def main(broker='localhost', port=1883):
+        an = Analyser(broker, port)
+        an.start()
 
+if __name__ == '__main__':
+    broker = sys.argv[1] if len(sys.argv) > 1 else None
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    if broker and port:
+        main(broker, port)
+    elif broker:
+        main(broker)
+    else:
+        main()
 

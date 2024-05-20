@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Chat-GPT was used to create this script
+
 # Array to store process IDs
 declare -a pids=()
 
@@ -22,7 +24,6 @@ instancecount=$1
 # Trap SIGINT (Ctrl+C) to call the function to terminate processes
 trap terminate_processes SIGINT
 
-# Loop to run 5 instances of your Python script with argument 'i'
 for ((i = 1; i <=instancecount; i++))
 do
     python3 publisher.py $i $host &

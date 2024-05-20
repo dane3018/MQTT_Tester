@@ -16,7 +16,7 @@ class Publisher:
         self.qos = 0
         self.delay = 0
         self.instancecount = 1
-        self.receieved = [False, False, False]
+        self.receieved = [False, False, False] # check whether all 3 values have been receieved 
         self.should_publish = False
         self.should_reconnect = True
     
@@ -39,11 +39,11 @@ class Publisher:
             self.instancecount = int(message)
             self.receieved[0] = True
         if self.instancecount >= self.instance_id and False not in self.receieved:
-            self.should_publish = True
+            # do not make call to publish loop in callback as this is run on a background thread
+            self.should_publish = True 
             
     
-
-
+    # functiont taken from https://www.emqx.com/en/blog/how-to-use-mqtt-in-python
     def on_disconnect(self, client, userdata, rc):
         #logging.info("Disconnected with result code: %s", rc)
         if not self.should_reconnect:
@@ -72,6 +72,9 @@ class Publisher:
 
 
     def publish_loop(self):
+        """
+        publishes incrementing count for 60 seconds. 
+        """
         topic = f"counter/{self.instance_id}/{self.qos}/{self.delay}"
         counter = 0
         start_time = time.time()
@@ -81,8 +84,11 @@ class Publisher:
             time.sleep(self.delay/1000)
 
     def start(self):
+        """
+        Starts the publisher. Will wait for all 3 request topics to be posted to 
+        then will start the publisher loop and repeat
+        """
         self.client.connect(self.broker, self.port)
-        #self.client.loop_forever()
         self.client.loop_start()
         try:
             while True:
